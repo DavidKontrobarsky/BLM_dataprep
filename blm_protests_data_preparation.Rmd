@@ -1,0 +1,159 @@
+---
+title: "blm_protests"
+author: "David Kontrobarsky 28743261"
+date: "18/08/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Clean protest data 
+
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+library(zoo)
+library(pmdplyr)
+library(haven)
+library(tidyverse)
+library(rlist)
+blm_protests <- read_csv("C:/Users/dkont/Desktop/SoDaLabs/BLM/data/blm_protests.csv")
+View(blm_protests)
+```
+
+```{r}
+blm_protests_cleaned <- blm_protests %>% 
+  filter(!grepl("Anthem", subject))  %>% 
+  mutate(participants_numeric = as.numeric(participants), 
+         state = sub(".*, ","",location),
+         city = sub(",.*","",location),
+         year = sub(".*, ","",date ),
+         month = word(date, 2, sep = " "),
+         month = match(month, month.name))
+
+count_by_month_city <- blm_protests_cleaned %>%  
+  group_by(state, city, year, month) %>% 
+  count(name = "protest_count") 
+
+count_by_month_city <- count_by_month_city[8:2602,]
+
+#write.csv(count_by_month_city, "count_by_month_city.csv")
+#(count_by_month_city, "count_by_month_city.dta")
+
+stata_protets <- read_csv("C:/Users/dkont/Desktop/SoDaLabs/BLM/data/stata_stuff_protests.csv")
+
+count_by_month_city$month <- stata_protets$yearmon
+
+#write.csv(count_by_month_city, "count_by_month_city.csv" )
+
+count_by_month_city <- read_csv("count_by_month_city.csv") %>% 
+  select(-c(X1)) 
+
+count_by_month_city <- count_by_month_city %>% 
+  add_row(state = "NY", city = "New York", year = 2020, month = "04", protest_count = 0)
+
+
+count_by_month_city <- count_by_month_city %>% 
+  mutate(year_month = as.yearmon(paste(year, month, sep = "-")),
+         state_city = paste(state, city, sep = "_"),
+         date = as.Date(year_month)) 
+
+
+#test <- count_by_month_city %>% tidyr::complete(state_city,  date)
+
+count_by_month_city$yearmonth_int <- time_variable(count_by_month_city$year_month)
+
+
+
+
+ 
+count_by_month_city_pibble <- as_pibble(count_by_month_city, .i = state_city, .t = yearmonth_int)  
+
+count_by_month_city_pibble_filled <- panel_fill(count_by_month_city_pibble,
+           .min = 1,
+           .max = 74,
+           .set_NA = c("year", "month", "year_month", "protest_count", "date")
+           ) 
+  
+
+
+count_by_month_city_pibble_filled$protest_count[is.na(count_by_month_city_pibble_filled$protest_count)] <- 0
+
+
+count_by_month_city_pibble_filled$year_month_new <- as.yearmon("Jul 2014") + (count_by_month_city_pibble_filled$yearmonth_int-1)/12
+
+count_by_month_city_pibble_filled <- count_by_month_city_pibble_filled %>% 
+  select(state, city, protest_count, year_month_new ) %>% 
+  mutate(year_month_str = as.character(year_month_new)) %>% 
+  filter(str_length(state)==2)
+
+#count_by_month_city_pibble_filled$date <- 
+
+write_dta(count_by_month_city_pibble_filled, "count_by_month_city_pibble_filled.dta")
+
+```
+
+#Police killings
+```{r}
+
+fatal_encounters_csv <- read_csv("C:/Users/dkont/Desktop/SoDaLabs/BLM/data/fatal_encounters_csv.csv")
+
+fatal_encounters_cleaned <- fatal_encounters_csv %>% 
+  mutate(month = sub("\\/.*","", DateDescription),
+         age = as.numeric(Subjectsage))
+
+fatal_encounters_n <-  fatal_encounters_cleaned %>% 
+  group_by(DateYear, month, Locationofdeathcity, Locationofdeathstate) %>% 
+  summarise(average_age_of_death = mean(age, na.rm = TRUE)) %>% 
+  mutate(death_count = n())
+
+stata_protets1 <- read_csv("C:/Users/dkont/Desktop/SoDaLabs/BLM/data/stata_stuff_deaths.csv")
+
+fatal_encounters_n$month1 <- stata_protets1$yearmon
+
+fatal_encounters_n <- fatal_encounters_n %>% 
+  mutate(yearmon = as.yearmon(paste(DateYear, month1, sep = "-")),
+         state_city  = paste(Locationofdeathstate, Locationofdeathcity, sep = "_"))
+
+fatal_encounters_n$yearmonth_int <- time_variable(fatal_encounters_n$yearmon)
+
+fatal_encounters_n_pibble <- as_pibble(fatal_encounters_n, .i = state_city, .t = yearmonth_int)
+
+fatal_encounters_n_pibble_filled <- panel_fill(fatal_encounters_n_pibble,
+           .min = 1,
+           .max = 248,
+           .set_NA = c("death_count", "average_age_of_death")
+           )
+
+fatal_encounters_n_pibble_filled <- fatal_encounters_n_pibble_filled %>% 
+  filter(str_length(Locationofdeathstate) == 2)
+
+fatal_encounters_n_pibble_filled$death_count[is.na(fatal_encounters_n_pibble_filled$death_count)] <- 0
+
+fatal_encounters_n_pibble_filled$year_month_new <- as.yearmon("Jan 2000") + (fatal_encounters_n_pibble_filled$yearmonth_int-1)/12
+
+write.csv(fatal_encounters_n_pibble_filled, "fatal_encounters_n_pibble_filled.csv")
+
+fatal_encounters_n_pibble_filled <- read_csv("fatal_encounters_n_pibble_filled.csv")
+
+
+fatal_encounters_n_pibble_filled <- fatal_encounters_n_pibble_filled %>% 
+  select(c(year_month_new, Locationofdeathstate, Locationofdeathcity, death_count ))
+
+write.csv(fatal_encounters_n_pibble_filled,"fatal_encounters_n_pibble_filled_final.csv")
+
+
+
+```
+
+
+```{r}
+
+protest_deaths_per_city <- merge(fatal_encounters_n_pibble_filled, count_by_month_city_pibble_filled,
+                                 by.x = c("year_month_new", "Locationofdeathcity", "Locationofdeathstate"),
+                                 by.y = c("year_month_new", "city", "state"))
+```
+
